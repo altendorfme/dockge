@@ -41,7 +41,7 @@
                         {{ $t("stopStack") }}
                     </button>
 
-                    <BDropdown v-if="!isEditMode && active" right text="" variant="normal">
+                    <BDropdown right text="" variant="normal">
                         <BDropdownItem @click="downStack">
                             <font-awesome-icon icon="stop" class="me-1" />
                             {{ $t("downStack") }}
@@ -54,6 +54,13 @@
                     <font-awesome-icon icon="trash" class="me-1" />
                     {{ $t("deleteStack") }}
                 </button>
+            </div>
+
+            <!-- URLs -->
+            <div v-if="urls.length > 0" class="mb-3">
+                <a v-for="(url, index) in urls" :key="index" target="_blank" :href="url.url">
+                    <span class="badge bg-secondary me-2">{{ url.display }}</span>
+                </a>
             </div>
 
             <!-- Progress Terminal -->
@@ -111,6 +118,20 @@
 
                     <button v-if="false && isEditMode && jsonConfig.services && Object.keys(jsonConfig.services).length > 0" class="btn btn-normal mb-3" @click="addContainer">{{ $t("addContainer") }}</button>
 
+                    <!-- General -->
+                    <div v-if="isEditMode">
+                        <h4 class="mb-3">{{ $t("extra") }}</h4>
+                        <div class="shadow-box big-padding mb-3">
+                            <!-- URLs -->
+                            <div class="mb-4">
+                                <label class="form-label">
+                                    {{ $tc("url", 2) }}
+                                </label>
+                                <ArrayInput name="urls" :display-name="$t('url')" placeholder="https://" object-type="x-dockge" />
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Combined Terminal Output -->
                     <div v-show="!isEditMode">
                         <h4 class="mb-3">Terminal</h4>
@@ -133,7 +154,7 @@
                             ref="editor"
                             v-model="stack.composeYAML"
                             class="yaml-editor"
-                            :highlight="highlighter"
+                            :highlight="highlighterYAML"
                             line-numbers :readonly="!isEditMode"
                             @input="yamlCodeChange"
                             @focus="editorFocus = true"
@@ -142,6 +163,22 @@
                     </div>
                     <div v-if="isEditMode" class="mb-3">
                         {{ yamlError }}
+                    </div>
+
+                    <!-- ENV editor -->
+                    <div v-if="isEditMode">
+                        <h4 class="mb-3">.env</h4>
+                        <div class="shadow-box mb-3 editor-box" :class="{'edit-mode' : isEditMode}">
+                            <prism-editor
+                                ref="editor"
+                                v-model="stack.composeENV"
+                                class="env-editor"
+                                :highlight="highlighterENV"
+                                line-numbers :readonly="!isEditMode"
+                                @focus="editorFocus = true"
+                                @blur="editorFocus = false"
+                            ></prism-editor>
+                        </div>
                     </div>
 
                     <div v-if="isEditMode">
@@ -211,10 +248,16 @@ services:
     ports:
       - "8080:80"
 `;
+const envDefault = "# VARIABLE=value #comment";
 
 let yamlErrorTimeout = null;
 
 let serviceStatusTimeout = null;
+let prismjsSymbolDefinition = {
+    "symbol": {
+        pattern: /(?<!\$)\$(\{[^{}]*\}|\w+)/,
+    }
+};
 
 export default {
     components: {
@@ -252,6 +295,34 @@ export default {
         };
     },
     computed: {
+
+        urls() {
+            if (!this.jsonConfig["x-dockge"] || !this.jsonConfig["x-dockge"].urls || !Array.isArray(this.jsonConfig["x-dockge"].urls)) {
+                return [];
+            }
+
+            let urls = [];
+            for (const url of this.jsonConfig["x-dockge"].urls) {
+                let display;
+                try {
+                    let obj = new URL(url);
+                    let pathname = obj.pathname;
+                    if (pathname === "/") {
+                        pathname = "";
+                    }
+                    display = obj.host + pathname + obj.search;
+                } catch (e) {
+                    display = url;
+                }
+
+                urls.push({
+                    display,
+                    url,
+                });
+            }
+            return urls;
+        },
+
         isAdd() {
             return this.$route.path === "/compose" && !this.submitted;
         },
@@ -319,6 +390,12 @@ export default {
             },
             deep: true,
         },
+
+        $route(to, from) {
+            // Leave Combined Terminal
+            console.debug("leaveCombinedTerminal", from.params.stackName);
+            this.$root.getSocket().emit("leaveCombinedTerminal", this.stack.name, () => {});
+        }
     },
     mounted() {
         if (this.isAdd) {
@@ -326,19 +403,26 @@ export default {
             this.isEditMode = true;
 
             let composeYAML;
+            let composeENV;
 
             if (this.$root.composeTemplate) {
                 composeYAML = this.$root.composeTemplate;
                 this.$root.composeTemplate = "";
-
             } else {
                 composeYAML = template;
+            }
+            if (this.$root.envTemplate) {
+                composeENV = this.$root.envTemplate;
+                this.$root.envTemplate = "";
+            } else {
+                composeENV = envDefault;
             }
 
             // Default Values
             this.stack = {
                 name: "",
                 composeYAML,
+                composeENV,
                 isManagedByDockge: true,
             };
 
@@ -361,7 +445,7 @@ export default {
             clearTimeout(serviceStatusTimeout);
             serviceStatusTimeout = setTimeout(async () => {
                 this.requestServiceStatus();
-            }, 2000);
+            }, 5000);
         },
 
         requestServiceStatus() {
@@ -437,7 +521,7 @@ export default {
 
             this.bindTerminal(this.terminalName);
 
-            this.$root.getSocket().emit("deployStack", this.stack.name, this.stack.composeYAML, this.isAdd, (res) => {
+            this.$root.getSocket().emit("deployStack", this.stack.name, this.stack.composeYAML, this.stack.composeENV, this.isAdd, (res) => {
                 this.processing = false;
                 this.$root.toastRes(res);
 
@@ -451,7 +535,7 @@ export default {
         saveStack() {
             this.processing = true;
 
-            this.$root.getSocket().emit("saveStack", this.stack.name, this.stack.composeYAML, this.isAdd, (res) => {
+            this.$root.getSocket().emit("saveStack", this.stack.name, this.stack.composeYAML, this.stack.composeENV, this.isAdd, (res) => {
                 this.processing = false;
                 this.$root.toastRes(res);
 
@@ -521,8 +605,44 @@ export default {
             this.isEditMode = false;
         },
 
-        highlighter(code) {
-            return highlight(code, languages.yaml);
+        highlighterYAML(code) {
+            if (!languages.yaml_with_symbols) {
+                languages.yaml_with_symbols = languages.insertBefore("yaml", "punctuation", {
+                    "symbol": prismjsSymbolDefinition["symbol"]
+                });
+            }
+            return highlight(code, languages.yaml_with_symbols);
+        },
+
+        highlighterENV(code) {
+            if (!languages.docker_env) {
+                languages.docker_env = {
+                    "comment": {
+                        pattern: /(^#| #).*$/m,
+                        greedy: true
+                    },
+                    "keyword": {
+                        pattern: /^\w*(?=[:=])/m,
+                        greedy: true
+                    },
+                    "value": {
+                        pattern: /(?<=[:=]).*?((?= #)|$)/m,
+                        greedy: true,
+                        inside: {
+                            "string": [
+                                {
+                                    pattern: /^ *'.*?(?<!\\)'/m,
+                                },
+                                {
+                                    pattern: /^ *".*?(?<!\\)"|^.*$/m,
+                                    inside: prismjsSymbolDefinition
+                                },
+                            ],
+                        },
+                    },
+                };
+            }
+            return highlight(code, languages.docker_env);
         },
 
         yamlCodeChange() {
@@ -542,10 +662,6 @@ export default {
 
                 if (Array.isArray(config.services) || typeof config.services !== "object") {
                     throw new Error("Services must be an object");
-                }
-
-                if (!config.version) {
-                    config.version = "3.8";
                 }
 
                 this.yamlDoc = doc;

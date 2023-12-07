@@ -1,7 +1,10 @@
 {
     "name": "dockge",
-    "version": "1.1.1",
+    "version": "1.3.2",
     "type": "module",
+    "engines": {
+        "node": ">= 18.0.0 && <= 18.17.1"
+    },
     "scripts": {
         "fmt": "eslint \"**/*.{ts,vue}\" --fix",
         "lint": "eslint \"**/*.{ts,vue}\"",
@@ -14,9 +17,11 @@
         "build:docker-base": "docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t louislam/dockge:base -f ./docker/Base.Dockerfile . --push",
         "build:docker": "node ./extra/env2arg.js docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t louislam/dockge:latest -t louislam/dockge:1 -t louislam/dockge:$VERSION --target release -f ./docker/Dockerfile . --push",
         "build:docker-nightly": "pnpm run build:frontend && docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t louislam/dockge:nightly --target nightly -f ./docker/Dockerfile . --push",
+        "build:healthcheck": "docker buildx build -f docker/BuildHealthCheck.Dockerfile --platform linux/amd64,linux/arm64,linux/arm/v7 -t louislam/dockge:build-healthcheck . --push",
         "start-docker": "docker run --rm -p 5001:5001 --name dockge louislam/dockge:latest",
         "mark-as-nightly": "tsx ./extra/mark-as-nightly.ts",
-        "reformat-changelog": "tsx ./extra/reformat-changelog.ts"
+        "reformat-changelog": "tsx ./extra/reformat-changelog.ts",
+        "reset-password": "tsx ./extra/reset-password.ts"
     },
     "dependencies": {
         "@homebridge/node-pty-prebuilt-multiarch": "~0.11.11",
@@ -28,6 +33,7 @@
         "composerize": "~1.4.1",
         "croner": "~7.0.5",
         "dayjs": "~1.11.10",
+        "dotenv": "~16.3.1",
         "express": "~4.18.2",
         "express-static-gzip": "~2.1.7",
         "http-graceful-shutdown": "~3.1.13",
@@ -36,6 +42,7 @@
         "knex": "~2.5.1",
         "limiter-es6-compat": "~2.1.2",
         "mysql2": "~3.6.3",
+        "promisify-child-process": "~4.1.2",
         "redbean-node": "~0.3.3",
         "socket.io": "~4.7.2",
         "socket.io-client": "~4.7.2",
